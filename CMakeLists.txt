@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.13)
 # Set our project and CPU specific flags, options, definitions and Linker Settings
 #####################################################################################
 # Set project name w/ no spaces
-set(PRODUCT_NAME "NEW_PROJECT")
+set(PRODUCT_NAME "avr-usb-made-simple")
 
 # Target MCU
 set(MCU atmega32u4)
@@ -54,6 +54,7 @@ set(EXTENDED_FUSE_VAL 0xC3)
 
 # Create a list of our APP source
 set(APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/usb.c
 )
 
 # Set all of our application and SDK include paths
@@ -99,6 +100,9 @@ add_compile_options(${COMPILE_OPTIONS})
 # Create our executable
 add_executable(${PRODUCT_NAME} ${APP_SRC} ${VENDOR_SRC}
 )
+
+# Prevent unused function and variable errors
+target_compile_options(${PRODUCT_NAME} PRIVATE "-Wno-error=unused-function" "-Wno-error=unused-but-set-variable" "-Wno-error=unused-variable")
 
 # Include all of the vendor CMake subdirs
 foreach(subdir ${CMAKE_SUBDIRS})

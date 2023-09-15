@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "io.h": "c",
+        "iom32u4.h": "c",
+        "string_view": "c"
+    }
+}

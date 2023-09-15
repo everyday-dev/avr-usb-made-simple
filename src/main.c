@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <avr/io.h>
 #include <util/delay.h>
+#include <avr/interrupt.h>
+#include "usb.h"
 
 #define LED_STAT_DDR        (DDRD)
 #define LED_STAT_PORT       (PORTD)
@@ -11,6 +13,10 @@
 int main(void) {
     // Set our LED port as an output
     LED_STAT_DDR |= (1 << LED_STAT_PIN);
+    // Init USB
+    usb_init();
+    // Enable global interrupts
+    sei();
 
     while(1) {
         // Set the LED pin HIGH
