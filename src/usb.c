@@ -1,7 +1,11 @@
 #include <stdbool.h>
+#include <string.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+#include "usb.h"
+
+#define CONTROL_EP_BANK_SIZE 8
 
 // USB standard request codes
 #define GET_STATUS 0x00
@@ -63,9 +67,9 @@ const uint8_t PROGMEM ConfigDescriptor[] = {
     0x00,       // bInterfaceNumber = 0;
     0x00,       // bAlternateSetting = 0;
     0x00,       // bNumEndpoints = USB_Endpoints;
-    0xFF,       // bInterfaceClass = 0xFF, classcode: custome (0xFF)
-    0xFF,       // bInterfaceSubClass = 0xFF, subclasscode: custome (0xFF)
-    0xFF,       // bInterfaceProtocol = 0xFF, protocoll code: custome (0xFF)
+    0xFF,       // bInterfaceClass = 0xFF,
+    0xFF,       // bInterfaceSubClass = 0xFF
+    0xFF,       // bInterfaceProtocol = 0xFF
     0x00        // iInterface = 0, Index for string descriptor interface
 };
 
@@ -124,6 +128,15 @@ const uint8_t PROGMEM SerialStringDescriptor[] = {
     '3',0x00
 };
 
+bool _setup_write_avail = false;
+uint16_t _setup_write_val = 0x00;
+
+uint8_t _setup_read_val[CONTROL_EP_BANK_SIZE] = {0x00};
+uint8_t _setup_read_len = 0x00;
+
+usb_controlWrite_rx_cb_t _setupWrite_cb = NULL;
+usb_controlRead_tx_cb_t _setupRead_cb = NULL;
+
 ISR(USB_GEN_vect) {
     // Check if a USB reset sequence was received from the host
     if (UDINT & (1<<EORSTI)) {
@@ -155,7 +168,7 @@ ISR(USB_COM_vect) {
     }
 }
 
-void usb_init(void) {
+void usb_init(usb_controlWrite_rx_cb_t onControlWriteCb, usb_controlRead_tx_cb_t onControlReadCb) {
     // Power-On USB pads regulator
     UHWCON |= (1 << UVREGE);
 
@@ -182,6 +195,15 @@ void usb_init(void) {
     // Leave power saving mode
     USBCON &= ~(1 << FRZCLK);
 
+    // Store our CB if we received one
+    if(onControlWriteCb != NULL) {
+        _setupWrite_cb = onControlWriteCb;
+    }
+
+    if(onControlReadCb != NULL) {
+        _setupRead_cb = onControlReadCb;
+    }
+
     // Attach the device by clearing the detach bit
     // This is acceptable in the case of a bus-powered device
     // otherwise you would initiate this step based on a
@@ -195,7 +217,16 @@ void usb_init(void) {
     UDIEN |= (1 << EORSTE);
 }
 
-bool _endpoint_init(void) {
+void usb_update(void) {
+    if(_setup_write_avail) {
+        _setup_write_avail = false;
+        if(_setupWrite_cb != NULL) {
+            _setupWrite_cb(_setup_write_val);
+        }
+    }
+}
+
+static bool _endpoint_init(void) {
     // Select Endpoint 0
     UENUM = 0x00;
     // Reset the endpoint fifo
@@ -269,6 +300,8 @@ static void  _processSetupPacket(void) {
     uint8_t wLength_l = UEDATX;
     uint8_t wLength_h = UEDATX;
     uint16_t descriptorLength = 0;
+    uint16_t wLength = wLength_l | (wLength_h << 8);
+    uint16_t wValue = wValue_l | (wValue_h << 8);
 
     // Ack the received setup package by clearing the RXSTPI bit
     UEINTX &= ~(1 << RXSTPI);
@@ -381,6 +414,40 @@ static void  _processSetupPacket(void) {
     }
     else if((bmRequestType & 0x60) == 0x40) { // Vendor specific request type
         switch(bRequest) {
+            case 0x01:
+                // Store the value we received
+                _setup_write_val = wValue;
+                // Set our flag to indicate we have data available
+                _setup_write_avail = true;
+                // Reply with a ZLP
+                UEINTX &= ~(1 << TXINI);
+                // Wait for the bank to become ready again
+                while (!(UEINTX & (1<<TXINI)));
+                break;
+
+            case 0x02:
+                if(_setupRead_cb != NULL) {
+                    // Call our callback to get the data to send back
+                    uint16_t txLen = _setupRead_cb(_setup_read_val,
+                        (wLength > CONTROL_EP_BANK_SIZE ?
+                            CONTROL_EP_BANK_SIZE :
+                            wLength));
+                    // Send the data back to the host
+                    for(uint16_t i = 0; i < txLen; i++) {
+                        UEDATX = _setup_read_val[i];
+                    }
+                    // Clear the TXINI bit to initiate the transfer
+                    UEINTX &= ~(1 << TXINI);
+                    // Wait for the bank to become ready again
+                    while (!(UEINTX & (1<<TXINI)));
+                }
+                else {
+                    // No callbakc was provided so
+                    // reply with a stall
+                    UECONX |= (1 << STALLRQ);
+                }
+                break;
+
             default:
                 // Unsupported vendor specific request. Reply with a STALL
                 UECONX |= (1 << STALLRQ);

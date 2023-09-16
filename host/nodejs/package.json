@@ -1,0 +1,15 @@
+{
+    "name": "avr-usb-made-simple",
+    "version": "1.0.0",
+    "description": "",
+    "main": "flash.js",
+    "scripts": {
+      "flash_led": "node flash.js",
+      "read_var": "node read.js"
+    },
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+      "usb": "^2.0.3"
+    }
+  }
