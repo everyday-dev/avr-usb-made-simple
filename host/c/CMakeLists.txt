@@ -5,7 +5,6 @@ cmake_minimum_required(VERSION 3.16)
 project(avr-usb-made-simple)
 
 add_executable(flash_led flash_led.c)
-target_link_libraries(flash_led usb-1.0)
-
-target_link_libraries(read_var usb-1.0)
 add_executable(read_var read_var.c)
+target_link_libraries(flash_led usb-1.0)
+target_link_libraries(read_var usb-1.0)
