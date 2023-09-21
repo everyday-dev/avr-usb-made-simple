@@ -128,12 +128,6 @@ const uint8_t PROGMEM SerialStringDescriptor[] = {
     '3',0x00
 };
 
-bool _setup_write_avail = false;
-uint16_t _setup_write_val = 0x00;
-
-uint8_t _setup_read_val[CONTROL_EP_BANK_SIZE] = {0x00};
-uint8_t _setup_read_len = 0x00;
-
 usb_controlWrite_rx_cb_t _setupWrite_cb = NULL;
 usb_controlRead_tx_cb_t _setupRead_cb = NULL;
 
@@ -217,15 +211,6 @@ void usb_init(usb_controlWrite_rx_cb_t onControlWriteCb, usb_controlRead_tx_cb_t
     UDIEN |= (1 << EORSTE);
 }
 
-void usb_update(void) {
-    if(_setup_write_avail) {
-        _setup_write_avail = false;
-        if(_setupWrite_cb != NULL) {
-            _setupWrite_cb(_setup_write_val);
-        }
-    }
-}
-
 static bool _endpoint_init(void) {
     // Select Endpoint 0
     UENUM = 0x00;
@@ -302,6 +287,7 @@ static void  _processSetupPacket(void) {
     uint16_t descriptorLength = 0;
     uint16_t wLength = wLength_l | (wLength_h << 8);
     uint16_t wValue = wValue_l | (wValue_h << 8);
+    uint8_t _setup_read_buff[CONTROL_EP_BANK_SIZE] = {0x00};
 
     // Ack the received setup package by clearing the RXSTPI bit
     UEINTX &= ~(1 << RXSTPI);
@@ -415,10 +401,11 @@ static void  _processSetupPacket(void) {
     else if((bmRequestType & 0x60) == 0x40) { // Vendor specific request type
         switch(bRequest) {
             case 0x01:
-                // Store the value we received
-                _setup_write_val = wValue;
-                // Set our flag to indicate we have data available
-                _setup_write_avail = true;
+                // If we have a callback stored, call it with the value
+                if(_setupWrite_cb != NULL) {
+                    _setupWrite_cb(wValue);
+                }
+
                 // Reply with a ZLP
                 UEINTX &= ~(1 << TXINI);
                 // Wait for the bank to become ready again
@@ -428,13 +415,13 @@ static void  _processSetupPacket(void) {
             case 0x02:
                 if(_setupRead_cb != NULL) {
                     // Call our callback to get the data to send back
-                    uint16_t txLen = _setupRead_cb(_setup_read_val,
+                    uint16_t txLen = _setupRead_cb(_setup_read_buff,
                         (wLength > CONTROL_EP_BANK_SIZE ?
                             CONTROL_EP_BANK_SIZE :
                             wLength));
                     // Send the data back to the host
                     for(uint16_t i = 0; i < txLen; i++) {
-                        UEDATX = _setup_read_val[i];
+                        UEDATX = _setup_read_buff[i];
                     }
                     // Clear the TXINI bit to initiate the transfer
                     UEINTX &= ~(1 << TXINI);

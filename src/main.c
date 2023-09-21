@@ -10,13 +10,10 @@
 #define LED_STAT_PORT       (PORTD)
 #define LED_STAT_PIN        (4)
 
+uint16_t my_led_state = 0;
+
 void onUsbControlWrite(uint16_t rxData) {
-    if(rxData) {
-        LED_STAT_PORT |= (1 << LED_STAT_PIN);
-    }
-    else {
-        LED_STAT_PORT &= ~(1 << LED_STAT_PIN);
-    }
+    my_led_state = rxData;
 }
 
 uint16_t onUsbControlRead(uint8_t *txData, const uint16_t requestedTxLen) {
@@ -40,8 +37,11 @@ int main(void) {
     sei();
 
     while(1) {
-        // Run the USB update function which will
-        // handle any pending USB callbacks
-        usb_update();
+        if(my_led_state) {
+            LED_STAT_PORT |= (1 << LED_STAT_PIN);
+        }
+        else {
+            LED_STAT_PORT &= ~(1 << LED_STAT_PIN);
+        }
     }
 }
