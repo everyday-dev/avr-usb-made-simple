@@ -55,6 +55,7 @@ set(EXTENDED_FUSE_VAL 0xC3)
 # Create a list of our APP source
 set(APP_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
             ${CMAKE_CURRENT_SOURCE_DIR}/src/usb.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/tick.c
 )
 
 # Set all of our application and SDK include paths
