@@ -6,6 +6,7 @@
 #include "usb.h"
 
 #define CONTROL_EP_BANK_SIZE 8
+#define INT_IN_EP_BANK_SIZE 8
 
 // USB standard request codes
 #define GET_STATUS 0x00
@@ -34,6 +35,7 @@
 static bool _endpoint_init(void);
 static void _sendDescriptor(const uint8_t* descriptor, uint16_t length);
 static void _processSetupPacket(void);
+static void _processIntInPacket(void);
 
 // USB descriptors (example, replace with your own)
 const uint8_t PROGMEM DeviceDescriptor[] = {
@@ -56,7 +58,7 @@ const uint8_t PROGMEM DeviceDescriptor[] = {
 const uint8_t PROGMEM ConfigDescriptor[] = {
     0x09,       // bLength
     0x02,       // bDescriptorType (Configuration == 2)
-    0x12, 0x00, // wTotalLength (Total length of configuration descriptor and sub-descriptors)
+    0x19, 0x00, // wTotalLength (Total length of configuration descriptor and sub-descriptors)
     0x01,       // bNumInterfaces (Number of interfaces in this configuration)
     0x01,       // bConfigurationValue (Configuration value, must be 1)
     0x00,       // iConfiguration (Index of string descriptor for this configuration)
@@ -66,11 +68,17 @@ const uint8_t PROGMEM ConfigDescriptor[] = {
     0x04,       // bDescriptorType = 0x04, (Interface == 4)
     0x00,       // bInterfaceNumber = 0;
     0x00,       // bAlternateSetting = 0;
-    0x00,       // bNumEndpoints = USB_Endpoints;
+    0x01,       // bNumEndpoints = USB_Endpoints;
     0xFF,       // bInterfaceClass = 0xFF,
     0xFF,       // bInterfaceSubClass = 0xFF
     0xFF,       // bInterfaceProtocol = 0xFF
-    0x00        // iInterface = 0, Index for string descriptor interface
+    0x00,       // iInterface = 0, Index for string descriptor interface
+    0x07,       // bLength = 0x07, length of EP descriptor in bytes
+    0x05,       // bDescriptorType = 0x05, (Endpoint == 5)
+    0x81,       // bEndpointAddress = 0x01, (IN Endpoint addr == 1)
+    0x03,       // bmAttributes = 0x03, (Interrupt == 3)
+    0x08, 0x00, // wMaxPacketSize = 0x08, (8 bytes per packet)
+    0x20        // bInterval = 0x20, (Polling interval == 32ms for a Full-Speed interface)
 };
 
 const uint8_t PROGMEM LanguageDescriptor[] = {
@@ -130,6 +138,8 @@ const uint8_t PROGMEM SerialStringDescriptor[] = {
 
 usb_controlWrite_rx_cb_t _setupWrite_cb = NULL;
 usb_controlRead_tx_cb_t _setupRead_cb = NULL;
+uint8_t _interrupt_in_buffer[INT_IN_EP_BANK_SIZE] = {0x00};
+uint8_t _interrupt_in_buffer_len = 0;
 
 ISR(USB_GEN_vect) {
     // Check if a USB reset sequence was received from the host
@@ -155,6 +165,13 @@ ISR(USB_COM_vect) {
                 // Handle the setup packet
                 _processSetupPacket();
             }
+            break;
+
+        case (1<<EPINT1):
+            // Select EP 1 before checking the interrupt register
+            UENUM = 1;
+            // Handle the IN packet request
+            _processIntInPacket();
             break;
 
         default:
@@ -211,6 +228,16 @@ void usb_init(usb_controlWrite_rx_cb_t onControlWriteCb, usb_controlRead_tx_cb_t
     UDIEN |= (1 << EORSTE);
 }
 
+uint16_t usb_sendInterruptData(const uint8_t *data, const uint16_t len) {
+    if(len < INT_IN_EP_BANK_SIZE) {
+        memcpy(_interrupt_in_buffer, data, len);
+        _interrupt_in_buffer_len = len;
+        return len;
+    }
+
+    return 0;
+}
+
 static bool _endpoint_init(void) {
     // Select Endpoint 0
     UENUM = 0x00;
@@ -222,11 +249,31 @@ static bool _endpoint_init(void) {
     // Configure endpoint as Control with OUT direction
     UECFG0X = 0;
     // Configure endpoint size
-    UECFG1X = (1 << EPSIZE1) | (1 << EPSIZE0);
+    UECFG1X = 0x00;
     // Allocate the endpoint buffers
     UECFG1X |= (1 << ALLOC);
     // Enable the endpoint interrupt
     UEIENX |= (1 << RXSTPE) | (1 << RXOUTE);
+    // Check if endpoint configuration is ok
+    if(!(UESTA0X & (1 << CFGOK))) {
+        return false;
+    }
+
+    // Select Endpoint 1
+    UENUM = 0x01;
+    // Reset the endpoint fifo
+    UERST = 0x7F;
+    UERST = 0x00;
+    // Enable the endpoint
+    UECONX |= (1 << EPEN);
+    // Configure endpoint as Interrupt with IN direction
+    UECFG0X = (1 << EPTYPE1) | (1 << EPTYPE0) | (1 << EPDIR);
+    // Configure endpoint size
+    UECFG1X = 0x00;
+    // Allocate the endpoint buffers
+    UECFG1X |= (1 << ALLOC);
+    // Enable the endpoint interrupt
+    UEIENX |= (1 << NAKINE) | (1 << RXOUTE);
     // Check if endpoint configuration is ok
     return((UESTA0X & (1 << CFGOK)));
 }
@@ -444,5 +491,33 @@ static void  _processSetupPacket(void) {
     else { // Invalid request type
         // Reply with a STALL
         UECONX |= (1 << STALLRQ);
+    }
+}
+
+static void _processIntInPacket(void) {
+    // Check to see if the NAK-IN flag is set.
+    // This means the CPU has NAK'd an IN request
+    // and we have yet to queue up new data to send.
+    if(UEINTX & (1<<NAKINI)) {
+        // Clear the NAK-IN flag to indicate
+        // we have data available on the next IN
+        // request
+        UEINTX &= ~(1<<NAKINI);
+        // Ensure the FIFO is empty
+        if(UEINTX & (1<<TXINI)) {
+            // Acknowledge the interrupt
+            UEINTX &= ~(1<<TXINI);
+            // If data has been given to us previously. Queue it up
+            if(_interrupt_in_buffer_len) {
+                // Load up the data to send
+                for(uint8_t i=0; i < _interrupt_in_buffer_len; i++) {
+                    UEDATX = _interrupt_in_buffer[i];
+                }
+                // Clear our buffer len to prevent multiple sends
+                _interrupt_in_buffer_len = 0;
+            }
+            // Free the bank
+            UEINTX &= ~(1<<FIFOCON);
+        }
     }
 }

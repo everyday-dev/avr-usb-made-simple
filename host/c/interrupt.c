@@ -28,7 +28,7 @@ int main() {
     pb_status_t pb_status = {0x00};
     pb_status_t prev_pb_status = {0x00};
     uint16_t led_flash_rate = 0x00;
-    bool start_stop = true;
+    bool start_stop = false;
 
     // Initialize libusb
     if (libusb_init(&ctx) != 0) {
@@ -60,21 +60,25 @@ int main() {
         rxBytes = rxInterruptData(&pb_status.byte);
 
         if(rxBytes && pb_status.byte) {
-            if(pb_status.bits.sw0 && !prev_pb_status.bits.sw0 && start_stop) {
+            if(pb_status.bits.sw0 && !prev_pb_status.bits.sw0) {
                 if(led_flash_rate < 2500)
                     led_flash_rate += 100;
 
                 printf("Increase delay to %dms\n", led_flash_rate);
 
-                sendControlTransfer(led_flash_rate);
+                if(start_stop) {
+                    sendControlTransfer(led_flash_rate);
+                }
             }
-            else if(pb_status.bits.sw1 && !prev_pb_status.bits.sw1 && start_stop) {
+            else if(pb_status.bits.sw1 && !prev_pb_status.bits.sw1) {
                 if(led_flash_rate >= 100)
                     led_flash_rate -= 100;
 
                 printf("Decrease delay to %dms\n", led_flash_rate);
 
-                sendControlTransfer(led_flash_rate);
+                if(start_stop) {
+                    sendControlTransfer(led_flash_rate);
+                }
             }
             else if(pb_status.bits.sw2 && !prev_pb_status.bits.sw2) {
                 start_stop = !start_stop;
